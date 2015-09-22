@@ -18,7 +18,6 @@ import android.app.Activity;
 
 import android.bluetooth.*;
 import android.util.Base64;
-
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.LOG;
 import org.apache.cordova.PluginResult;
@@ -178,7 +177,8 @@ public class Peripheral extends BluetoothGattCallback {
             result.setKeepCallback(true);
             connectCallback.sendPluginResult(result);
         } else {
-            connectCallback.error("Service discovery failed. status = " + status);
+            LOG.e(TAG, "Service discovery failed. status = " + status);
+            connectCallback.error(this.asJSONObject());
             disconnect();
         }
     }
@@ -195,11 +195,10 @@ public class Peripheral extends BluetoothGattCallback {
 
         } else {
 
-            connected = false;
             if (connectCallback != null) {
-                connectCallback.error("Disconnected");
-                connectCallback = null;
+                connectCallback.error(this.asJSONObject());
             }
+            disconnect();
         }
 
     }
@@ -279,7 +278,8 @@ public class Peripheral extends BluetoothGattCallback {
         }
 
         BluetoothGattService service = gatt.getService(serviceUUID);
-        BluetoothGattCharacteristic characteristic = service.getCharacteristic(characteristicUUID);
+        //BluetoothGattCharacteristic characteristic = service.getCharacteristic(characteristicUUID);
+        BluetoothGattCharacteristic characteristic = findNotifyCharacteristic(service, characteristicUUID);
         String key = generateHashKey(serviceUUID, characteristic);
 
         if (characteristic != null) {
@@ -324,6 +324,34 @@ public class Peripheral extends BluetoothGattCallback {
         }
     }
 
+    // Some devices reuse UUIDs across characteristics, so we can't use service.getCharacteristic(characteristicUUID)
+    // instead check the UUID and properties for each characteristic in the service until we find the best match
+    // This function prefers Notify over Indicate
+    private BluetoothGattCharacteristic findNotifyCharacteristic(BluetoothGattService service, UUID characteristicUUID) {
+        BluetoothGattCharacteristic characteristic = null;
+
+        // Check for Notify first
+        List<BluetoothGattCharacteristic> characteristics = service.getCharacteristics();
+        for (BluetoothGattCharacteristic c : characteristics) {
+            if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0 && characteristicUUID.equals(c.getUuid())) {
+                characteristic = c;
+                break;
+            }
+        }
+
+        if (characteristic != null) return characteristic;
+
+        // If there wasn't Notify Characteristic, check for Indicate
+        for (BluetoothGattCharacteristic c : characteristics) {
+            if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0 && characteristicUUID.equals(c.getUuid())) {
+                characteristic = c;
+                break;
+            }
+        }
+
+        return characteristic;
+    }
+
     private void readCharacteristic(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
 
         boolean success = false;
@@ -355,38 +383,57 @@ public class Peripheral extends BluetoothGattCallback {
     }
 
     private void writeCharacteristic(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, byte[] data, int writeType) {
+
+        boolean success = false;
+
         if (gatt == null) {
             callbackContext.error("BluetoothGatt is null");
             return;
         }
 
         BluetoothGattService service = gatt.getService(serviceUUID);
+        BluetoothGattCharacteristic characteristic = findWritableCharacteristic(service, characteristicUUID, writeType);
+
+        if (characteristic == null) {
+            callbackContext.error("Characteristic " + characteristicUUID + " not found.");
+        } else {
+            characteristic.setValue(data);
+            characteristic.setWriteType(writeType);
+            writeCallback = callbackContext;
+
+            if (gatt.writeCharacteristic(characteristic)) {
+                success = true;
+            } else {
+                writeCallback = null;
+                callbackContext.error("Write failed");
+            }
+        }
+
+        if (!success) {
+            commandCompleted();
+        }
+
+    }
+
+    // Some peripherals re-use UUIDs for multiple characteristics so we need to check the properties
+    // and UUID of all characteristics instead of using service.getCharacteristic(characteristicUUID)
+    private BluetoothGattCharacteristic findWritableCharacteristic(BluetoothGattService service, UUID characteristicUUID, int writeType) {
         BluetoothGattCharacteristic characteristic = null;
 
-        for (BluetoothGattCharacteristic c : service.getCharacteristics()) {
-            if (c.getProperties() == (BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE)) {
+        // get write property
+        int writeProperty = BluetoothGattCharacteristic.PROPERTY_WRITE;
+        if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
+            writeProperty = BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE;
+        }
+
+        List<BluetoothGattCharacteristic> characteristics = service.getCharacteristics();
+        for (BluetoothGattCharacteristic c : characteristics) {
+            if ((c.getProperties() & writeProperty) != 0 && characteristicUUID.equals(c.getUuid())) {
                 characteristic = c;
                 break;
             }
         }
-
-        // if no writeable characteristic is found, return err
-        if (characteristic == null) {
-            callbackContext.error("Characteristic " + characteristicUUID + " not found.");
-            return;
-        }
-
-        characteristic.setValue(data);
-        characteristic.setWriteType(writeType);
-        writeCallback = callbackContext;
-
-        if (!gatt.writeCharacteristic(characteristic)) {
-            writeCallback = null;
-            callbackContext.error("Write failed");
-            return;
-        }
-
-        commandCompleted();
+        return characteristic;
     }
 
     public void queueRead(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {

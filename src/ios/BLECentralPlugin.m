@@ -81,7 +81,7 @@
 
     [connectCallbacks removeObjectForKey:uuid];
 
-    if (peripheral && peripheral.state == CBPeripheralStateConnected) {
+    if (peripheral && peripheral.state != CBPeripheralStateDisconnected) {
         [manager cancelPeripheralConnection:peripheral];
     }
 
@@ -94,11 +94,11 @@
 - (void)read:(CDVInvokedUrlCommand*)command {
     NSLog(@"read");
 
-    Foo *foo = [self getData:command prop:CBCharacteristicPropertyRead];
-    if (foo) {
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyRead];
+    if (context) {
 
-        CBPeripheral *peripheral = [foo peripheral];
-        CBCharacteristic *characteristic = [foo characteristic];
+        CBPeripheral *peripheral = [context peripheral];
+        CBCharacteristic *characteristic = [context characteristic];
 
         NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
         [readCallbacks setObject:[command.callbackId copy] forKey:key];
@@ -111,14 +111,14 @@
 // write: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
 - (void)write:(CDVInvokedUrlCommand*)command {
 
-    Foo *foo = [self getData:command prop:(CBCharacteristicPropertyRead | CBCharacteristicPropertyWrite)];
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWrite];
     NSData *message = [command.arguments objectAtIndex:3]; // This is binary
-    if (foo) {
+    if (context) {
 
         if (message != nil) {
 
-            CBPeripheral *peripheral = [foo peripheral];
-            CBCharacteristic *characteristic = [foo characteristic];
+            CBPeripheral *peripheral = [context peripheral];
+            CBCharacteristic *characteristic = [context characteristic];
 
             NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
             [writeCallbacks setObject:[command.callbackId copy] forKey:key];
@@ -141,14 +141,14 @@
 - (void)writeWithoutResponse:(CDVInvokedUrlCommand*)command {
     NSLog(@"writeWithoutResponse");
 
-    Foo *foo = [self getData:command prop:CBCharacteristicPropertyWriteWithoutResponse];
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWriteWithoutResponse];
     NSData *message = [command.arguments objectAtIndex:3]; // This is binary
 
-    if (foo) {
+    if (context) {
         CDVPluginResult *pluginResult = nil;
         if (message != nil) {
-            CBPeripheral *peripheral = [foo peripheral];
-            CBCharacteristic *characteristic = [foo characteristic];
+            CBPeripheral *peripheral = [context peripheral];
+            CBCharacteristic *characteristic = [context characteristic];
 
             // TODO need to check the max length
             [peripheral writeValue:message forCharacteristic:characteristic type:CBCharacteristicWriteWithoutResponse];
@@ -166,11 +166,11 @@
 - (void)startNotification:(CDVInvokedUrlCommand*)command {
     NSLog(@"registering for notification");
 
-    Foo *foo = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
 
-    if (foo) {
-        CBPeripheral *peripheral = [foo peripheral];
-        CBCharacteristic *characteristic = [foo characteristic];
+    if (context) {
+        CBPeripheral *peripheral = [context peripheral];
+        CBCharacteristic *characteristic = [context characteristic];
 
         NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
         NSString *callback = [command.callbackId copy];
@@ -186,11 +186,11 @@
 - (void)stopNotification:(CDVInvokedUrlCommand*)command {
     NSLog(@"registering for notification");
 
-    Foo *foo = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
+    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
 
-    if (foo) {
-        CBPeripheral *peripheral = [foo peripheral];
-        CBCharacteristic *characteristic = [foo characteristic];
+    if (context) {
+        CBPeripheral *peripheral = [context peripheral];
+        CBCharacteristic *characteristic = [context characteristic];
 
         NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
         NSString *callback = [command.callbackId copy];
@@ -201,11 +201,6 @@
 
     }
 
-}
-
-- (void)indicate:(CDVInvokedUrlCommand*)command {
-    CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Not Implemented"];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 }
 
 - (void)isEnabled:(CDVInvokedUrlCommand*)command {
@@ -324,6 +319,13 @@
 - (void)centralManagerDidUpdateState:(CBCentralManager *)central
 {
     NSLog(@"Status of CoreBluetooth central manager changed %ld %@", (long)central.state, [self centralManagerStateToString: central.state]);
+
+    if (central.state == CBCentralManagerStateUnsupported)
+    {
+        NSLog(@"=============================================================");
+        NSLog(@"WARNING: This hardware does not support Bluetooth Low Energy.");
+        NSLog(@"=============================================================");
+    }
 }
 
 - (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral {
@@ -342,8 +344,6 @@
 
     NSLog(@"didDisconnectPeripheral");
 
-    // TODO send PhoneGap more info from NSError
-
     NSString *connectCallbackId = [connectCallbacks valueForKey:[peripheral uuidAsString]];
     [connectCallbacks removeObjectForKey:[peripheral uuidAsString]];
 
@@ -359,13 +359,11 @@
 
     NSLog(@"didFailToConnectPeripheral");
 
-    // TODO send PhoneGap more info from NSError
-
     NSString *connectCallbackId = [connectCallbacks valueForKey:[peripheral uuidAsString]];
     [connectCallbacks removeObjectForKey:[peripheral uuidAsString]];
 
     CDVPluginResult *pluginResult = nil;
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Failed to Connect"];
+    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:[peripheral asDictionary]];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:connectCallbackId];
 
 }
@@ -535,7 +533,7 @@
     for(int i=0; i < service.characteristics.count; i++)
     {
         CBCharacteristic *c = [service.characteristics objectAtIndex:i];
-        if  (c.properties == prop && [self compareCBUUID:c.UUID UUID2:UUID]) {
+        if ((c.properties & prop) != 0x0 && [self compareCBUUID:c.UUID UUID2:UUID]) {
             return c;
         }
     }
@@ -557,7 +555,7 @@
 }
 
 // expecting deviceUUID, serviceUUID, characteristicUUID in command.arguments
--(Foo*) getData:(CDVInvokedUrlCommand*)command prop:(CBCharacteristicProperties)prop {
+-(BLECommandContext*) getData:(CDVInvokedUrlCommand*)command prop:(CBCharacteristicProperties)prop {
     NSLog(@"getData");
 
     CDVPluginResult *pluginResult = nil;
@@ -602,8 +600,14 @@
 
     CBCharacteristic *characteristic = [self findCharacteristicFromUUID:characteristicUUID service:service prop:prop];
 
+    // Special handling for INDICATE. If charateristic with notify is not found, check for indicate.
+    if (prop == CBCharacteristicPropertyNotify && !characteristic) {
+        characteristic = [self findCharacteristicFromUUID:characteristicUUID service:service prop:CBCharacteristicPropertyIndicate];
+    }
+
     if (!characteristic)
     {
+        // NOTE: the characteristic might exist, but not have the right property
         NSLog(@"Could not find characteristic with UUID %@ on service with UUID %@ on peripheral with UUID %@",
               characteristicUUIDString,
               serviceUUIDString,
@@ -620,11 +624,11 @@
         return nil;
     }
 
-    Foo *foo = [[Foo alloc] init];
-    [foo setPeripheral:peripheral];
-    [foo setService:service];
-    [foo setCharacteristic:characteristic];
-    return foo;
+    BLECommandContext *context = [[BLECommandContext alloc] init];
+    [context setPeripheral:peripheral];
+    [context setService:service];
+    [context setCharacteristic:characteristic];
+    return context;
 
 }
 

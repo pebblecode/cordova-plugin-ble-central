@@ -164,7 +164,7 @@ Connect to a peripheral.
 
 ### Description
 
-Function `connect` connects to a BLE peripheral. The callback is long running. Success will be called when the connection is successful. Service and characteristic info will be passed to the success callback in the [peripheral object](#peripheral-data). Failure is called if the connection fails, or later if the connection disconnects. An error message is passed to the failure callback.
+Function `connect` connects to a BLE peripheral. The callback is long running. Success will be called when the connection is successful. Service and characteristic info will be passed to the success callback in the [peripheral object](#peripheral-data). Failure is called if the connection fails, or later if the peripheral disconnects. An peripheral object is passed to the failure callback.
 
 ### Parameters
 
@@ -226,6 +226,27 @@ Function `write` writes data to a characteristic.
 - __success__: Success callback function that is invoked when the connection is successful. [optional]
 - __failure__: Error callback function, invoked when error occurs. [optional]
 
+### Quick Example
+
+Use an [ArrayBuffer](#typed-arrays) when writing data.
+
+    // send 1 byte to switch a light on
+    var data = new Uint8Array(1);
+    data[0] = 1;
+    ble.write(device_id, "FF10", "FF11", data.buffer, success, failure);
+
+    // send a 3 byte value with RGB color
+    var data = new Uint8Array(3);
+    data[0] = 0xFF;  // red
+    data[0] = 0x00; // green
+    data[0] = 0xFF; // blue
+    ble.write(device_id, "ccc0", "ccc1", data.buffer, success, failure);
+
+    // send a 32 bit integer
+    var data = new Uint32Array(1);
+    data[0] = counterInput.value;
+    ble.write(device_id, SERVICE, CHARACTERISTIC, data.buffer, success, failure);
+
 ## writeWithoutResponse
 
 Writes data to a characteristic without confirmation from the peripheral.
@@ -252,7 +273,7 @@ Register to be notified when the value of a characteristic changes.
 
 ### Description
 
-Function `startNotification` registers a callback that is called when the value of a characteristic changes. This method handles both `notifications` and `indications`.
+Function `startNotification` registers a callback that is called *every time* the value of a characteristic changes. This method handles both `notifications` and `indications`. The success callback is called multiple times.
 
 Raw data is passed from native code to the success callback as an [ArrayBuffer](#typed-arrays).
 
@@ -261,8 +282,18 @@ Raw data is passed from native code to the success callback as an [ArrayBuffer](
 - __device_id__: UUID or MAC address of the peripheral
 - __service_uuid__: UUID of the BLE service
 - __characteristic_uuid__: UUID of the BLE characteristic
-- __success__: Success callback function that is invoked when the connection is successful. [optional]
+- __success__: Success callback function invoked every time a notification occurs
 - __failure__: Error callback function, invoked when error occurs. [optional]
+ 
+### Quick Example
+
+    var onData = function(buffer) {
+        // Decode the ArrayBuffer into a typed Array based on the data you expect
+        var data = new Uint8Array(buffer);
+        alert("Button state changed to " + data[0]);
+    }
+    
+    ble.startNotification(device_id, "FFE0", "FFE1", onData, failure);
 
 ## stopNotification
 

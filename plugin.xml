@@ -3,7 +3,7 @@
     xmlns="http://www.phonegap.com/ns/plugins/1.0"
     xmlns:android="http://schemas.android.com/apk/res/android"
     id="cordova-plugin-ble-central"
-    version="1.0.0">
+    version="1.0.1">
 
     <name>BLE</name>
     <description>Bluetooth Low Energy (BLE) Central Plugin</description>
@@ -31,8 +31,8 @@
         <header-file src="src/ios/CBPeripheral+Extensions.h" target-dir="BLECentralPlugin" />
         <source-file src="src/ios/CBPeripheral+Extensions.m" target-dir="BLECentralPlugin" />
 
-        <header-file src="src/ios/Foo.h" target-dir="BLECentralPlugin" />
-        <source-file src="src/ios/Foo.m" target-dir="BLECentralPlugin" />
+        <header-file src="src/ios/BLECommandContext.h" target-dir="BLECentralPlugin" />
+        <source-file src="src/ios/BLECommandContext.m" target-dir="BLECentralPlugin" />
 
         <!-- frameworks -->
         <framework src="CoreBluetooth.framework" />
@@ -62,6 +62,12 @@
         <source-file src="src/android/UUIDHelper.java"
             target-dir="src/com/megster/cordova/ble/central"/>
 
+    </platform>
+
+    <platform name="browser">
+        <js-module src="src/browser/BLECentralPlugin.js" name="BLECentralPlugin">
+            <merges target="ble" />
+        </js-module>
     </platform>
 
     <platform name="wp8">

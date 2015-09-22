@@ -21,7 +21,7 @@
 
 #import <Cordova/CDV.h>
 #import <CoreBluetooth/CoreBluetooth.h>
-#import "Foo.h"
+#import "BLECommandContext.h"
 #import "CBPeripheral+Extensions.h"
 
 @interface BLECentralPlugin : CDVPlugin <CBCentralManagerDelegate, CBPeripheralDelegate> {
@@ -50,8 +50,6 @@
 
 - (void)startNotification:(CDVInvokedUrlCommand *)command;
 - (void)stopNotification:(CDVInvokedUrlCommand *)command;
-
-- (void)indicate:(CDVInvokedUrlCommand *)command;
 
 - (void)isEnabled:(CDVInvokedUrlCommand *)command;
 - (void)isConnected:(CDVInvokedUrlCommand *)command;
