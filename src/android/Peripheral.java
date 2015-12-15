@@ -316,7 +316,6 @@ public class Peripheral extends BluetoothGattCallback {
         }
 
         BluetoothGattService service = gatt.getService(serviceUUID);
-        //BluetoothGattCharacteristic characteristic = service.getCharacteristic(characteristicUUID);
         BluetoothGattCharacteristic characteristic = findNotifyCharacteristic(service, characteristicUUID);
         String key = generateHashKey(serviceUUID, characteristic);
 
@@ -362,6 +361,36 @@ public class Peripheral extends BluetoothGattCallback {
         }
     }
 
+    private void removeNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+
+        if (gatt == null) {
+            callbackContext.error("BluetoothGatt is null");
+            return;
+        }
+
+        BluetoothGattService service = gatt.getService(serviceUUID);
+        BluetoothGattCharacteristic characteristic = findNotifyCharacteristic(service, characteristicUUID);
+        String key = generateHashKey(serviceUUID, characteristic);
+
+        if (characteristic != null) {
+
+            notificationCallbacks.remove(key);
+
+            if (gatt.setCharacteristicNotification(characteristic, false)) {
+                callbackContext.success();
+            } else {
+                // TODO we can probably ignore and return success anyway since we removed the notification callback
+                callbackContext.error("Failed to stop notification for " + characteristicUUID);
+            }
+
+        } else {
+            callbackContext.error("Characteristic " + characteristicUUID + " not found");
+        }
+
+        commandCompleted();
+
+    }
+
     // Some devices reuse UUIDs across characteristics, so we can't use service.getCharacteristic(characteristicUUID)
     // instead check the UUID and properties for each characteristic in the service until we find the best match
     // This function prefers Notify over Indicate
@@ -387,6 +416,11 @@ public class Peripheral extends BluetoothGattCallback {
             }
         }
 
+        // As a last resort, try and find ANY characteristic with this UUID, even if it doesn't have the correct properties
+        if (characteristic == null) {
+            characteristic = service.getCharacteristic(characteristicUUID);
+        }
+
         return characteristic;
     }
 
@@ -400,7 +434,7 @@ public class Peripheral extends BluetoothGattCallback {
         }
 
         BluetoothGattService service = gatt.getService(serviceUUID);
-        BluetoothGattCharacteristic characteristic = service.getCharacteristic(characteristicUUID);
+        BluetoothGattCharacteristic characteristic = findReadableCharacteristic(service, characteristicUUID);
 
         if (characteristic == null) {
             callbackContext.error("Characteristic " + characteristicUUID + " not found.");
@@ -418,6 +452,29 @@ public class Peripheral extends BluetoothGattCallback {
             commandCompleted();
         }
 
+    }
+
+    // Some peripherals re-use UUIDs for multiple characteristics so we need to check the properties
+    // and UUID of all characteristics instead of using service.getCharacteristic(characteristicUUID)
+    private BluetoothGattCharacteristic findReadableCharacteristic(BluetoothGattService service, UUID characteristicUUID) {
+        BluetoothGattCharacteristic characteristic = null;
+
+        int read = BluetoothGattCharacteristic.PROPERTY_READ;
+
+        List<BluetoothGattCharacteristic> characteristics = service.getCharacteristics();
+        for (BluetoothGattCharacteristic c : characteristics) {
+            if ((c.getProperties() & read) != 0 && characteristicUUID.equals(c.getUuid())) {
+                characteristic = c;
+                break;
+            }
+        }
+
+        // As a last resort, try and find ANY characteristic with this UUID, even if it doesn't have the correct properties
+        if (characteristic == null) {
+            characteristic = service.getCharacteristic(characteristicUUID);
+        }
+
+        return characteristic;
     }
 
     private void writeCharacteristic(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, byte[] data, int writeType) {
@@ -475,6 +532,12 @@ public class Peripheral extends BluetoothGattCallback {
                 break;
             }
         }
+
+        // As a last resort, try and find ANY characteristic with this UUID, even if it doesn't have the correct properties
+        if (characteristic == null) {
+            characteristic = service.getCharacteristic(characteristicUUID);
+        }
+
         return characteristic;
     }
 
@@ -490,6 +553,11 @@ public class Peripheral extends BluetoothGattCallback {
 
     public void queueRegisterNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
         BLECommand command = new BLECommand(callbackContext, serviceUUID, characteristicUUID, BLECommand.REGISTER_NOTIFY);
+        queueCommand(command);
+    }
+
+    public void queueRemoveNotifyCallback(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID) {
+        BLECommand command = new BLECommand(callbackContext, serviceUUID, characteristicUUID, BLECommand.REMOVE_NOTIFY);
         queueCommand(command);
     }
 
@@ -538,6 +606,10 @@ public class Peripheral extends BluetoothGattCallback {
                 LOG.d(TAG,"Register Notify " + command.getCharacteristicUUID());
                 bleProcessing = true;
                 registerNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID());
+            } else if (command.getType() == BLECommand.REMOVE_NOTIFY) {
+                LOG.d(TAG,"Remove Notify " + command.getCharacteristicUUID());
+                bleProcessing = true;
+                removeNotifyCallback(command.getCallbackContext(), command.getServiceUUID(), command.getCharacteristicUUID());
             } else {
                 // this shouldn't happen
                 throw new RuntimeException("Unexpected BLE Command type " + command.getType());

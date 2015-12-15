@@ -50,7 +50,8 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     private static final String WRITE = "write";
     private static final String WRITE_WITHOUT_RESPONSE = "writeWithoutResponse";
 
-    private static final String NOTIFY = "startNotification"; // register for characteristic notification
+    private static final String START_NOTIFICATION = "startNotification"; // register for characteristic notification
+    private static final String STOP_NOTIFICATION = "stopNotification"; // remove characteristic notification
 
     private static final String IS_ENABLED = "isEnabled";
     private static final String IS_CONNECTED  = "isConnected";
@@ -137,12 +138,19 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
             int type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
             write(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type);
 
-        } else if (action.equals(NOTIFY)) {
+        } else if (action.equals(START_NOTIFICATION)) {
 
             String macAddress = args.getString(0);
             UUID serviceUUID = uuidFromString(args.getString(1));
             UUID characteristicUUID = uuidFromString(args.getString(2));
             registerNotifyCallback(callbackContext, macAddress, serviceUUID, characteristicUUID);
+
+        } else if (action.equals(STOP_NOTIFICATION)) {
+
+            String macAddress = args.getString(0);
+            UUID serviceUUID = uuidFromString(args.getString(1));
+            UUID characteristicUUID = uuidFromString(args.getString(2));
+            removeNotifyCallback(callbackContext, macAddress, serviceUUID, characteristicUUID);
 
         } else if (action.equals(IS_ENABLED)) {
 
@@ -269,6 +277,22 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         }
 
     }
+
+    private void removeNotifyCallback(CallbackContext callbackContext, String macAddress, UUID serviceUUID, UUID characteristicUUID) {
+
+        Peripheral peripheral = peripherals.get(macAddress);
+        if (peripheral != null) {
+
+            peripheral.queueRemoveNotifyCallback(callbackContext, serviceUUID, characteristicUUID);
+
+        } else {
+
+            callbackContext.error("Peripheral " + macAddress + " not found");
+
+        }
+
+    }
+
 
     private void findLowEnergyDevices(CallbackContext callbackContext, UUID[] serviceUUIDs, int scanSeconds) {
 
