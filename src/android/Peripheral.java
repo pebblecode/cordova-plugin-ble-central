@@ -78,6 +78,25 @@ public class Peripheral extends BluetoothGattCallback {
             gatt.close();
             gatt = null;
         }
+        // NOTE: if a disconnect happens between writeCharacteristic() and onCharacteristicWrite(),
+        // onCharacteristicWrite() will never be called.
+        // This works around that by calling .error() on any existing callbacks
+        if (writeCallback != null) {
+            writeCallback.error("disconnected");
+            writeCallback = null;
+        }
+        if (readCallback != null) {
+            readCallback.error("disconnected");
+            readCallback = null;
+        }
+        if (connectCallback != null) {
+            connectCallback.error("disconnected");
+            connectCallback = null;
+        }
+        // when the above issue happens, make sure we aren't stuck in bleProcessing = true
+        bleProcessing = false;
+        // consume any outstanding commands, since we were disconnected
+        processCommands();
     }
 
     public JSONObject asJSONObject()  {
@@ -189,9 +208,18 @@ public class Peripheral extends BluetoothGattCallback {
         this.gatt = gatt;
 
         if (newState == BluetoothGatt.STATE_CONNECTED) {
-
+                LOG.d(TAG, "onConnectionStateChange() connected");
             connected = true;
-            gatt.discoverServices();
+            boolean success = gatt.discoverServices();
+            if (!success) {
+                LOG.d(TAG, "discoverServices() failed");
+                connected = false;
+                if (connectCallback != null) {
+                    connectCallback.error("Service discovery failed");
+                    connectCallback = null;
+                }
+                disconnect();
+            }
 
         } else {
 
