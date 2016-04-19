@@ -26,32 +26,49 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
-/**
- * Peripheral wraps the BluetoothDevice and provides methods to convert to JSON.
- */
 public class Peripheral extends BluetoothGattCallback {
 
     public final static UUID CLIENT_CHARACTERISTIC_CONFIGURATION_UUID = UUIDHelper.uuidFromString("2902");
     private static final String TAG = "Peripheral";
 
+    // commands is a FIFO queue of commands which need to be executed in order.
+    private Queue<Command> commands = new ConcurrentLinkedQueue<Command>();
+    // processed is a FIFO queue of commands which have been processed but allow us to rewind and
+    // retry in case we fail at some point in the first flow.
+    private Queue<Command> processed = new ConcurrentLinkedQueue<Command>();
+
     private BluetoothDevice device;
+    private Activity activity;
     private byte[] advertisingData;
+    private boolean expectDisconnect = false;
+    private byte reconnectAttempts = 0;
     private int advertisingRSSI;
+    private boolean connected = false;
+    private boolean servicesDiscovered = false;
+    private boolean processing = false;
 
     BluetoothGatt gatt;
 
     private CallbackContext commandContext;
+    private CallbackContext notifyContext;
 
     public Peripheral(BluetoothDevice device, int advertisingRSSI, byte[] scanRecord) {
         this.device = device;
         this.advertisingRSSI = advertisingRSSI;
         this.advertisingData = scanRecord;
+
     }
 
+    // COMMANDS
+
     public void connect(CallbackContext callbackContext, Activity activity) {
-        Log.d(TAG, "Attempting to establish new connection to locker.");
+        Log.d(TAG, "Attempting to establish new connection to locker: " + reconnectAttempts);
         commandContext = callbackContext;
+        expectDisconnect = false;
+        processing = true;
+        this.activity = activity;
         BluetoothDevice device = this.device;
         gatt = device.connectGatt(activity, false, this);
     }
@@ -59,8 +76,14 @@ public class Peripheral extends BluetoothGattCallback {
     public void close(CallbackContext callbackContext) {
         Log.d(TAG, "Attempting to disconnect from a locker.");
         commandContext = callbackContext;
+        expectDisconnect = true;
+        processing = true;
         // should we be checking that gatt isn't null here? Feels like that should never be the case
         // and if it is there is a logic issue which needs to be fixed.
+        if (gatt == null) {
+            Log.d(TAG, "GATT is null, we are already disconnected");
+        }
+
         gatt.disconnect();
     }
 
@@ -82,6 +105,8 @@ public class Peripheral extends BluetoothGattCallback {
         PluginResult result = new PluginResult(PluginResult.Status.OK, this.asJSONObject(gatt));
         Log.d(TAG, gatt.getServices().toString());
         commandContext.sendPluginResult(result);
+        servicesDiscovered = true;
+        processing = false;
     }
 
     /*
@@ -91,6 +116,17 @@ public class Peripheral extends BluetoothGattCallback {
     public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
         super.onDescriptorWrite(gatt, descriptor, status);
         Log.d(TAG, "Descriptor write: " +status);
+        if (status == gatt.GATT_SUCCESS) {
+            if (notifyContext != null) {
+                notifyContext.success();
+            }
+            // check if there is an outstanding write command
+        } else {
+            if (status == 133) {
+                commandContext = notifyContext;
+                expectDisconnect = false;
+            }
+        }
     }
 
     @Override
@@ -110,8 +146,12 @@ public class Peripheral extends BluetoothGattCallback {
                 return;
             case BluetoothProfile.STATE_CONNECTED:
                 Log.d(TAG, "SUCCESSFULLY CONNECTED");
-                // an error occured while attempting to discover services. this is NOT a connection
+                // an error occurred while attempting to discover services. this is NOT a connection
                 // error
+                if (connected) {
+                    Log.d(TAG, "You are already connected, nothing to do...");
+                    return;
+                }
                 if (!gatt.discoverServices()) {
                     Log.d(TAG, "Error discovering services of CONNECTED peripheral.");
                     close(commandContext);
@@ -122,8 +162,23 @@ public class Peripheral extends BluetoothGattCallback {
                 return;
             case BluetoothProfile.STATE_DISCONNECTED:
                 Log.d(TAG, "SUCCESSFULLY DISCONNECTED");
-                commandContext.success("You have been disconnected from the door: " + newState);
+                connected = false;
+                // If we actually issued a disconnect from the door, this is a success, otherwise
+                // we can try to reconnect
                 gatt.close();
+                new java.util.Timer().schedule(
+                        new java.util.TimerTask() {
+                            @Override
+                            public void run() {
+                                if (expectDisconnect) {
+                                    commandContext.success("You have been disconnected from the door: ");
+                                } else {
+                                    commandContext.error("You were unexpectedly disconnected from the door: ");
+                                }
+                            }
+                        },
+                        4000
+                );
                 return;
             default:
                 commandContext.error("An unexpected response was returned from the new locker connection state");
@@ -153,9 +208,15 @@ public class Peripheral extends BluetoothGattCallback {
 
     public void write(CallbackContext callbackContext, UUID serviceUUID, UUID characteristicUUID, byte[] data, int writeType) {
         commandContext = callbackContext;
-
+        expectDisconnect = false;
         if (gatt == null) {
             Log.d(TAG, "gatt is null??");
+            return;
+        }
+
+        // If we were disconnected in the meantime
+        if (!connected && !servicesDiscovered) {
+            Log.d(TAG, "You have been disconnected");
             return;
         }
 
@@ -181,6 +242,8 @@ public class Peripheral extends BluetoothGattCallback {
             return;
         }
 
+        expectDisconnect = false;
+        notifyContext = callbackContext;
         BluetoothGattService service = gatt.getService(serviceUUID);
         BluetoothGattCharacteristic characteristic = findNotifyCharacteristic(service, characteristicUUID);
 
@@ -188,6 +251,7 @@ public class Peripheral extends BluetoothGattCallback {
             Log.d(TAG, "Characteristic " + characteristicUUID + " not found");
             return;
         }
+
 
         // if we were unable to register for notifications
         if (!gatt.setCharacteristicNotification(characteristic, true)) {
@@ -202,25 +266,65 @@ public class Peripheral extends BluetoothGattCallback {
         }
 
         if (!gatt.writeDescriptor(descriptor)) {
-            Log.d(TAG, "unable to initiate write descritor");
+            Log.d(TAG, "unable to initiate write descriptor");
             return;
         }
     }
 
+    // HANDLING THE COMMAND QUEUE
 
-    private void removeNotifyCallback(UUID serviceUUID, UUID characteristicUUID) {
-        if (gatt == null) {
-            Log.d(TAG, "BluetoothGatt is null");
-            return;
-        }
+    private void next() {
+        // check if we are waiting for a command to finish
 
-        BluetoothGattService service = gatt.getService(serviceUUID);
-        BluetoothGattCharacteristic characteristic = findNotifyCharacteristic(service, characteristicUUID);
+        // if there are no further commands queued, we can exit
 
-        if (!gatt.setCharacteristicNotification(characteristic, false)) {
-            Log.d(TAG, "Error removing notifications");
-        }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     // Some devices reuse UUIDs across characteristics, so we can't use service.getCharacteristic(characteristicUUID)
     // instead check the UUID and properties for each characteristic in the service until we find the best match
@@ -263,14 +367,6 @@ public class Peripheral extends BluetoothGattCallback {
         }
 
         return characteristic;
-    }
-
-    private String generateHashKey(BluetoothGattCharacteristic characteristic) {
-        return generateHashKey(characteristic.getService().getUuid(), characteristic);
-    }
-
-    private String generateHashKey(UUID serviceUUID, BluetoothGattCharacteristic characteristic) {
-        return String.valueOf(serviceUUID) + "|" + characteristic.getUuid() + "|" + characteristic.getInstanceId();
     }
 
     // --------------------------------------------------------------------------------------------
