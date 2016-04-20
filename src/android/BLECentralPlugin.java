@@ -37,7 +37,7 @@ import org.json.JSONException;
 import java.util.*;
 
 
-public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.LeScanCallback, PeripheralCallback {
+public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.LeScanCallback {
 
     // actions
     private static final String START_SCAN = "startScan";
@@ -65,11 +65,6 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     BluetoothManager bluetoothManager;
 
     Peripheral activePeripheral;
-
-    @Override
-    public void onPeripheralChange() {
-        Log.d(TAG, "I've been called");
-    }
 
     @Override
     public boolean execute(String action, CordovaArgs args, CallbackContext callbackContext) throws JSONException {

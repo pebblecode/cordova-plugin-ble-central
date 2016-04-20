@@ -34,12 +34,6 @@ public class Peripheral extends BluetoothGattCallback {
     public final static UUID CLIENT_CHARACTERISTIC_CONFIGURATION_UUID = UUIDHelper.uuidFromString("2902");
     private static final String TAG = "Peripheral";
 
-    // commands is a FIFO queue of commands which need to be executed in order.
-    private Queue<Command> commands = new ConcurrentLinkedQueue<Command>();
-    // processed is a FIFO queue of commands which have been processed but allow us to rewind and
-    // retry in case we fail at some point in the first flow.
-    private Queue<Command> processed = new ConcurrentLinkedQueue<Command>();
-
     private BluetoothDevice device;
     private Activity activity;
     private byte[] advertisingData;
