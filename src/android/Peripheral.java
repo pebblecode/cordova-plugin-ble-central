@@ -17,6 +17,7 @@ package com.megster.cordova.ble.central;
 import android.app.Activity;
 
 import android.bluetooth.*;
+import android.content.Context;
 import android.util.Base64;
 import android.util.Log;
 import org.apache.cordova.CallbackContext;
@@ -82,6 +83,13 @@ public class Peripheral extends BluetoothGattCallback {
         // and if it is there is a logic issue which needs to be fixed.
         if (gatt == null) {
             Log.d(TAG, "GATT is null, we are already disconnected");
+            commandContext.success();
+            return;
+        }
+
+        BluetoothManager bluetoothManager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
+        if (!bluetoothManager.getConnectedDevices(BluetoothProfile.GATT).contains(this.device)) {
+            Log.d(TAG, "I think we are not connected");
         }
 
         gatt.disconnect();
@@ -94,11 +102,11 @@ public class Peripheral extends BluetoothGattCallback {
     @Override
     public void onServicesDiscovered(BluetoothGatt gatt, int status) {
         super.onServicesDiscovered(gatt, status);
-        Log.d(TAG, "Attempting to discover locker services");
+        Log.d(TAG, "Attempting to discover locker services"+ status);
 
         // If we have not been able to discover services what should we do?
         if (status != BluetoothGatt.GATT_SUCCESS) {
-            close(commandContext);
+//            close(commandContext);
             return;
         }
 
@@ -131,14 +139,7 @@ public class Peripheral extends BluetoothGattCallback {
 
     @Override
     public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-        Log.d(TAG, "onConnectionStateChange" + status + " : " + newState);
-
-        if (status != BluetoothGatt.GATT_SUCCESS) {
-            // do we need a unique error handler to handle unexected error without mashing it
-            // together with connect/disconnect callback handlers?
-            close(commandContext);
-            return;
-        }
+        Log.d(TAG, "onConnectionStateChange: " + status + " : " + newState);
 
         switch (newState) {
             case BluetoothProfile.STATE_CONNECTING:
@@ -162,7 +163,6 @@ public class Peripheral extends BluetoothGattCallback {
                 return;
             case BluetoothProfile.STATE_DISCONNECTED:
                 Log.d(TAG, "SUCCESSFULLY DISCONNECTED");
-                connected = false;
                 // If we actually issued a disconnect from the door, this is a success, otherwise
                 // we can try to reconnect
                 gatt.close();
@@ -170,6 +170,7 @@ public class Peripheral extends BluetoothGattCallback {
                         new java.util.TimerTask() {
                             @Override
                             public void run() {
+                                connected = false;
                                 if (expectDisconnect) {
                                     commandContext.success("You have been disconnected from the door: ");
                                 } else {
@@ -184,6 +185,14 @@ public class Peripheral extends BluetoothGattCallback {
                 commandContext.error("An unexpected response was returned from the new locker connection state");
                 Log.d(TAG, "UNEXPECTED STATE" + newState);
         }
+
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            // do we need a unique error handler to handle unexected error without mashing it
+            // together with connect/disconnect callback handlers?
+            Log.d(TAG, "An unexpected connection error has occured");
+            return;
+        }
+
     }
 
     @Override
@@ -192,7 +201,9 @@ public class Peripheral extends BluetoothGattCallback {
         Log.d(TAG, "onCharacteristicChanged " + characteristic);
         if (commandContext != null) {
             Log.d(TAG, "We've received a notification for something");
-            commandContext.success(characteristic.getValue());
+            PluginResult pr = new PluginResult(PluginResult.Status.OK, characteristic.getValue());
+            pr.setKeepCallback(true);
+            commandContext.sendPluginResult(pr);
         }
     }
 
