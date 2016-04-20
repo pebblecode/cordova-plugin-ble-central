@@ -278,7 +278,7 @@
 
 - (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error {
 
-    NSLog(@"didDisconnectPeripheral");
+    NSLog(@"didDisconnectPeripheral %@", error);
 
     if (commandCallbackId) {
         
