@@ -49,6 +49,9 @@
 - (void)connect:(CDVInvokedUrlCommand *)command {
 
     NSLog(@"Connect");
+    
+    commandCallbackId = [command.callbackId copy];
+    
     NSString *uuidString = [command.arguments objectAtIndex:0];
     
     NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
@@ -69,7 +72,6 @@
     if (activePeripheral) {
         NSLog(@"Connecting to peripheral with UUID : %@", uuid);
         expectDisconnect = false;
-        commandCallbackId = [command.callbackId copy];
         [manager connectPeripheral:activePeripheral options:nil];
     }
 
@@ -79,6 +81,8 @@
 - (void)disconnect:(CDVInvokedUrlCommand*)command {
     NSLog(@"Disconnect");
 
+    commandCallbackId = [command.callbackId copy];
+    
     if (activePeripheral == nil || activePeripheral == CBPeripheralStateDisconnected) {
         NSLog(@"No active peripheral or already disconnected");
         // Just return OK
@@ -87,7 +91,6 @@
         return;
     }
     
-    commandCallbackId = [command.callbackId copy];
     expectDisconnect = true;
     [manager cancelPeripheralConnection:activePeripheral];
     
@@ -96,6 +99,8 @@
 // write: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
 - (void)write:(CDVInvokedUrlCommand*)command {
 
+    commandCallbackId = [command.callbackId copy];
+    
     BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWrite];
     NSData *message = [command.arguments objectAtIndex:3]; // This is binary
     if (context) {
@@ -110,8 +115,6 @@
         CBPeripheral *peripheral = [context peripheral];
         CBCharacteristic *characteristic = [context characteristic];
 
-        commandCallbackId = [command.callbackId copy];
-
         // TODO need to check the max length
         [peripheral writeValue:message forCharacteristic:characteristic type:CBCharacteristicWriteWithResponse];
 
@@ -125,13 +128,13 @@
 - (void)startNotification:(CDVInvokedUrlCommand*)command {
     NSLog(@"Registering for notification");
 
+    commandCallbackId = [command.callbackId copy];
+    
     BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
 
     if (context) {
         CBPeripheral *peripheral = [context peripheral];
         CBCharacteristic *characteristic = [context characteristic];
-
-        commandCallbackId = [command.callbackId copy];
 
         [peripheral setNotifyValue:YES forCharacteristic:characteristic];
     }
@@ -389,10 +392,8 @@
                 resultWithStatus:CDVCommandStatus_ERROR
                 messageAsString:[error localizedDescription]
             ];
-        } else {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
         }
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
     }
 
 }
