@@ -25,16 +25,13 @@
 #import "CBPeripheral+Extensions.h"
 
 @interface BLECentralPlugin : CDVPlugin <CBCentralManagerDelegate, CBPeripheralDelegate> {
+    BOOL expectDisconnect;
     NSString* discoverPeripherialCallbackId;
-    NSMutableDictionary* connectCallbacks;
-    NSMutableDictionary *readCallbacks;
-    NSMutableDictionary *writeCallbacks;
-    NSMutableDictionary *notificationCallbacks;
-    NSMutableDictionary *stopNotificationCallbacks;
-    NSMutableDictionary *connectCallbackLatches;
+    NSString* commandCallbackId;
+    NSMutableSet* servicesToDiscoverCharacteristicsFor;
 }
 
-@property (strong, nonatomic) NSMutableSet *peripherals;
+@property (strong, nonatomic) CBPeripheral *activePeripheral;
 @property (strong, nonatomic) CBCentralManager *manager;
 
 - (void)scan:(CDVInvokedUrlCommand *)command;
@@ -44,12 +41,9 @@
 - (void)connect:(CDVInvokedUrlCommand *)command;
 - (void)disconnect:(CDVInvokedUrlCommand *)command;
 
-- (void)read:(CDVInvokedUrlCommand *)command;
 - (void)write:(CDVInvokedUrlCommand *)command;
-- (void)writeWithoutResponse:(CDVInvokedUrlCommand *)command;
 
 - (void)startNotification:(CDVInvokedUrlCommand *)command;
-- (void)stopNotification:(CDVInvokedUrlCommand *)command;
 
 - (void)isEnabled:(CDVInvokedUrlCommand *)command;
 - (void)isConnected:(CDVInvokedUrlCommand *)command;
