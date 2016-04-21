@@ -27,7 +27,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class Peripheral extends BluetoothGattCallback {
 
@@ -84,6 +83,8 @@ public class Peripheral extends BluetoothGattCallback {
         BluetoothManager bluetoothManager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
         if (!bluetoothManager.getConnectedDevices(BluetoothProfile.GATT).contains(this.device)) {
             Log.d(TAG, "I think we are not connected");
+            commandContext.success();
+            return;
         }
 
         gatt.disconnect();
@@ -100,7 +101,6 @@ public class Peripheral extends BluetoothGattCallback {
 
         // If we have not been able to discover services what should we do?
         if (status != BluetoothGatt.GATT_SUCCESS) {
-//            close(commandContext);
             return;
         }
 
