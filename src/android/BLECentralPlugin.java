@@ -16,6 +16,7 @@ package com.megster.cordova.ble.central;
 
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothProfile;
+import android.content.Intent;
 import android.os.Build.VERSION;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
@@ -48,6 +49,7 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     private static final String WRITE = "write";
     private static final String START_NOTIFICATION = "startNotification"; // register for characteristic notification
     private static final String ENABLE = "enable";
+    private static final String IS_ENABLED = "isEnabled";
 
     // callbacks
     CallbackContext discoverCallback;
@@ -63,6 +65,7 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
     BluetoothAdapter bluetoothAdapter;
     BluetoothManager bluetoothManager;
+    CallbackContext enableBluetoothCallback;
 
     Peripheral activePeripheral;
 
@@ -121,8 +124,15 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                 final UUID chars = uuidFromString(args.getString(2));
                 registerNotifyCallback(cb, mac, service, chars);
                 break;
+            case IS_ENABLED:
+                boolean isEnabled = bluetoothAdapter.isEnabled();
+                PluginResult result = new PluginResult(PluginResult.Status.OK, isEnabled);
+                callbackContext.sendPluginResult(result);
+                break;
             case ENABLE:
-                Log.d(TAG, "We have enabled bluetooth");
+                enableBluetoothCallback = callbackContext;
+                Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                cordova.startActivityForResult(this, intent, REQUEST_ENABLE_BLUETOOTH);
                 break;
             default:
                 LOG.d(TAG, "Invalid action provided");
@@ -217,4 +227,21 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         return serviceUUIDs.toArray(new UUID[jsonArray.length()]);
     }
 
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (enableBluetoothCallback == null) {
+            return;
+        }
+        if (requestCode != REQUEST_ENABLE_BLUETOOTH) {
+            return;
+        }
+        if (resultCode == Activity.RESULT_OK) {
+            LOG.d(TAG, "User enabled Bluetooth");
+            enableBluetoothCallback.success();
+            return;
+        }
+        LOG.d(TAG, "User did *NOT* enable Bluetooth");
+        enableBluetoothCallback.error("User did not enable Bluetooth");
+        enableBluetoothCallback = null;
+    }
 }
