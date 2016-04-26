@@ -83,7 +83,7 @@
 
     commandCallbackId = [command.callbackId copy];
     
-    if (activePeripheral == nil || activePeripheral == CBPeripheralStateDisconnected) {
+    if (activePeripheral == nil || activePeripheral.state == CBPeripheralStateDisconnected) {
         NSLog(@"No active peripheral or already disconnected");
         // Just return OK
         CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
