@@ -57,6 +57,10 @@ module.exports = {
         cordova.exec(successWrapper, failure, 'BLE', 'scan', [services, seconds]);
     },
 
+    onBluetoothStateChanged: function(success, failure) {
+        cordova.exec(success, failure, 'BLE', 'onBluetoothStateChanged', []);
+    },
+
     startScan: function (services, success, failure) {
         var successWrapper = function(peripheral) {
             convertToNativeJS(peripheral);

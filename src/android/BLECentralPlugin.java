@@ -16,7 +16,9 @@ package com.megster.cordova.ble.central;
 
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothProfile;
+import android.content.BroadcastReceiver;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build.VERSION;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
@@ -50,6 +52,7 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     private static final String START_NOTIFICATION = "startNotification"; // register for characteristic notification
     private static final String ENABLE = "enable";
     private static final String IS_ENABLED = "isEnabled";
+    private static final String ON_STATE_CHANGED = "onBluetoothStateChanged";
 
     // callbacks
     CallbackContext discoverCallback;
@@ -66,7 +69,7 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     BluetoothAdapter bluetoothAdapter;
     BluetoothManager bluetoothManager;
     CallbackContext enableBluetoothCallback;
-
+    CallbackContext onBluetooothStateChangeCallback;
     Peripheral activePeripheral;
 
     @Override
@@ -78,9 +81,9 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         UUID serviceUUID;
         UUID characteristicUUID;
         String macAddress;
+        Activity activity = cordova.getActivity();
 
         if (bluetoothAdapter == null) {
-            Activity activity = cordova.getActivity();
             bluetoothManager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
             bluetoothAdapter = bluetoothManager.getAdapter();
         }
@@ -134,12 +137,51 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                 Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
                 cordova.startActivityForResult(this, intent, REQUEST_ENABLE_BLUETOOTH);
                 break;
+            case ON_STATE_CHANGED:
+                onBluetooothStateChangeCallback = callbackContext;
+                BroadcastReceiver receiver = this.stateChangeReceiver();
+                IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+                activity.registerReceiver(receiver, filter);
+                break;
             default:
                 LOG.d(TAG, "Invalid action provided");
                 return false;
 
         }
         return true;
+    }
+
+
+    private BroadcastReceiver stateChangeReceiver() {
+        return new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                final String action = intent.getAction();
+                PluginResult result;
+                if (action.equals(BluetoothAdapter.ACTION_STATE_CHANGED)) {
+                    final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE,
+                            BluetoothAdapter.ERROR);
+                    switch (state) {
+                        case BluetoothAdapter.STATE_OFF:
+                            result = new PluginResult(PluginResult.Status.OK, false);
+                            result.setKeepCallback(true);
+                            onBluetooothStateChangeCallback.sendPluginResult(result);
+                            break;
+                        case BluetoothAdapter.STATE_TURNING_OFF:
+                            Log.d(TAG, "Bluetooth is turning off");
+                            break;
+                        case BluetoothAdapter.STATE_ON:
+                            result = new PluginResult(PluginResult.Status.OK, true);
+                            result.setKeepCallback(true);
+                            onBluetooothStateChangeCallback.sendPluginResult(result);
+                            break;
+                        case BluetoothAdapter.STATE_TURNING_ON:
+                            Log.d(TAG, "Bluetooth is turning on");
+                            break;
+                    }
+                }
+            }
+        };
     }
 
     /*
