@@ -1,3 +1,6 @@
+= 2.0.0 =
+pebble {code} locker version (not intended for general usage)
+
 = 1.1.0 =
 pebble {code} error handling improvements
 
