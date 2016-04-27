@@ -28,6 +28,7 @@
     BOOL expectDisconnect;
     NSString* discoverPeripherialCallbackId;
     NSString* commandCallbackId;
+    NSString* onBluetooothStateChangeCallback;
     NSMutableSet* servicesToDiscoverCharacteristicsFor;
 }
 
@@ -46,6 +47,7 @@
 - (void)startNotification:(CDVInvokedUrlCommand *)command;
 
 - (void)isEnabled:(CDVInvokedUrlCommand *)command;
+- (void)onBluetoothStateChanged:(CDVInvokedUrlCommand *)command;
 - (void)isConnected:(CDVInvokedUrlCommand *)command;
 
 @end
