@@ -20,14 +20,13 @@
 #import <Cordova/CDV.h>
 
 @interface BLECentralPlugin()
-- (CBPeripheral *)findPeripheralByUUID:(NSString *)uuid;
 - (void)stopScanTimer:(NSTimer *)timer;
 @end
 
 @implementation BLECentralPlugin
 
 @synthesize manager;
-@synthesize peripherals;
+@synthesize activePeripheral;
 
 - (void)pluginInitialize {
 
@@ -36,169 +35,108 @@
 
     [super pluginInitialize];
 
-    peripherals = [NSMutableSet set];
+    expectDisconnect = false;
+    
+    activePeripheral = nil;
     manager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
 
-    connectCallbacks = [NSMutableDictionary new];
-    connectCallbackLatches = [NSMutableDictionary new];
-    readCallbacks = [NSMutableDictionary new];
-    writeCallbacks = [NSMutableDictionary new];
-    notificationCallbacks = [NSMutableDictionary new];
-    stopNotificationCallbacks = [NSMutableDictionary new];
+    commandCallbackId = nil;
+    servicesToDiscoverCharacteristicsFor = nil;
 }
 
 #pragma mark - Cordova Plugin Methods
 
 - (void)connect:(CDVInvokedUrlCommand *)command {
 
-    NSLog(@"connect");
-    NSString *uuid = [command.arguments objectAtIndex:0];
+    NSLog(@"Connect");
+    
+    commandCallbackId = [command.callbackId copy];
+    
+    NSString *uuidString = [command.arguments objectAtIndex:0];
+    
+    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
+    NSArray *uuidArray = @[uuid];
+    NSArray *peripheralArray = [manager retrievePeripheralsWithIdentifiers:uuidArray];
 
-    CBPeripheral *peripheral = [self findPeripheralByUUID:uuid];
-
-    if (peripheral) {
-        NSLog(@"Connecting to peripheral with UUID : %@", uuid);
-
-        [connectCallbacks setObject:[command.callbackId copy] forKey:[peripheral uuidAsString]];
-        [manager connectPeripheral:peripheral options:nil];
-
-    } else {
+    if ([peripheralArray count] < 1) {
         NSString *error = [NSString stringWithFormat:@"Could not find peripheral %@.", uuid];
-        NSLog(@"%@", error);
+        NSLog(@"Connect error: %@", uuidString);
         CDVPluginResult *pluginResult = nil;
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+        return;
+    }
+    
+    activePeripheral = [peripheralArray firstObject];
+    
+    if (activePeripheral) {
+        NSLog(@"Connecting to peripheral with UUID : %@", uuid);
+        expectDisconnect = false;
+        [manager connectPeripheral:activePeripheral options:nil];
     }
 
 }
 
 // disconnect: function (device_id, success, failure) {
 - (void)disconnect:(CDVInvokedUrlCommand*)command {
-    NSLog(@"disconnect");
+    NSLog(@"Disconnect");
 
-    NSString *uuid = [command.arguments objectAtIndex:0];
-    CBPeripheral *peripheral = [self findPeripheralByUUID:uuid];
-
-    [connectCallbacks removeObjectForKey:uuid];
-
-    if (peripheral && peripheral.state != CBPeripheralStateDisconnected) {
-        [manager cancelPeripheralConnection:peripheral];
+    commandCallbackId = [command.callbackId copy];
+    
+    if (activePeripheral == nil || activePeripheral.state == CBPeripheralStateDisconnected) {
+        NSLog(@"No active peripheral or already disconnected");
+        // Just return OK
+        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+        return;
     }
-
-    // always return OK
-    CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-}
-
-// read: function (device_id, service_uuid, characteristic_uuid, success, failure) {
-- (void)read:(CDVInvokedUrlCommand*)command {
-    NSLog(@"read");
-
-    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyRead];
-    if (context) {
-
-        CBPeripheral *peripheral = [context peripheral];
-        CBCharacteristic *characteristic = [context characteristic];
-
-        NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
-        [readCallbacks setObject:[command.callbackId copy] forKey:key];
-
-        [peripheral readValueForCharacteristic:characteristic];  // callback sends value
-    }
-
+    
+    expectDisconnect = true;
+    [manager cancelPeripheralConnection:activePeripheral];
+    
 }
 
 // write: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
 - (void)write:(CDVInvokedUrlCommand*)command {
 
+    commandCallbackId = [command.callbackId copy];
+    
     BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWrite];
     NSData *message = [command.arguments objectAtIndex:3]; // This is binary
     if (context) {
 
-        if (message != nil) {
-
-            CBPeripheral *peripheral = [context peripheral];
-            CBCharacteristic *characteristic = [context characteristic];
-
-            NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
-            [writeCallbacks setObject:[command.callbackId copy] forKey:key];
-
-            // TODO need to check the max length
-            [peripheral writeValue:message forCharacteristic:characteristic type:CBCharacteristicWriteWithResponse];
-
-            // response is sent from didWriteValueForCharacteristic
-
-        } else {
+        if (message == nil) {
             CDVPluginResult *pluginResult = nil;
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"message was null"];
             [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+            return;
         }
+        
+        CBPeripheral *peripheral = [context peripheral];
+        CBCharacteristic *characteristic = [context characteristic];
+
+        // TODO need to check the max length
+        [peripheral writeValue:message forCharacteristic:characteristic type:CBCharacteristicWriteWithResponse];
+
+        // response is sent from didWriteValueForCharacteristic
     }
 
-}
-
-// writeWithoutResponse: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
-- (void)writeWithoutResponse:(CDVInvokedUrlCommand*)command {
-    NSLog(@"writeWithoutResponse");
-
-    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWriteWithoutResponse];
-    NSData *message = [command.arguments objectAtIndex:3]; // This is binary
-
-    if (context) {
-        CDVPluginResult *pluginResult = nil;
-        if (message != nil) {
-            CBPeripheral *peripheral = [context peripheral];
-            CBCharacteristic *characteristic = [context characteristic];
-
-            // TODO need to check the max length
-            [peripheral writeValue:message forCharacteristic:characteristic type:CBCharacteristicWriteWithoutResponse];
-
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-        } else {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"message was null"];
-        }
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-    }
 }
 
 // success callback is called on notification
 // notify: function (device_id, service_uuid, characteristic_uuid, success, failure) {
 - (void)startNotification:(CDVInvokedUrlCommand*)command {
-    NSLog(@"registering for notification");
+    NSLog(@"Registering for notification");
 
+    commandCallbackId = [command.callbackId copy];
+    
     BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
 
     if (context) {
         CBPeripheral *peripheral = [context peripheral];
         CBCharacteristic *characteristic = [context characteristic];
-
-        NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
-        NSString *callback = [command.callbackId copy];
-        [notificationCallbacks setObject: callback forKey: key];
 
         [peripheral setNotifyValue:YES forCharacteristic:characteristic];
-
-    }
-
-}
-
-// stopNotification: function (device_id, service_uuid, characteristic_uuid, success, failure) {
-- (void)stopNotification:(CDVInvokedUrlCommand*)command {
-    NSLog(@"registering for notification");
-
-    BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
-
-    if (context) {
-        CBPeripheral *peripheral = [context peripheral];
-        CBCharacteristic *characteristic = [context characteristic];
-
-        NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
-        NSString *callback = [command.callbackId copy];
-        [stopNotificationCallbacks setObject: callback forKey: key];
-
-        [peripheral setNotifyValue:NO forCharacteristic:characteristic];
-        // callback sent from peripheral:didUpdateNotificationStateForCharacteristic:error:
-
     }
 
 }
@@ -277,9 +215,8 @@
 - (void)isConnected:(CDVInvokedUrlCommand*)command {
 
     CDVPluginResult *pluginResult = nil;
-    CBPeripheral *peripheral = [self findPeripheralByUUID:[command.arguments objectAtIndex:0]];
-
-    if (peripheral && peripheral.state == CBPeripheralStateConnected) {
+    
+    if (activePeripheral && activePeripheral.state == CBPeripheralStateConnected) {
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
     } else {
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Not connected"];
@@ -303,7 +240,6 @@
 
 - (void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary *)advertisementData RSSI:(NSNumber *)RSSI {
 
-    [peripherals addObject:peripheral];
     [peripheral setAdvertisementData:advertisementData RSSI:RSSI];
 
     if (discoverPeripherialCallbackId) {
@@ -342,15 +278,20 @@
 
 - (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error {
 
-    NSLog(@"didDisconnectPeripheral");
+    NSLog(@"didDisconnectPeripheral %@", error);
 
-    NSString *connectCallbackId = [connectCallbacks valueForKey:[peripheral uuidAsString]];
-    [connectCallbacks removeObjectForKey:[peripheral uuidAsString]];
-
-    if (connectCallbackId) {
+    if (commandCallbackId) {
+        
         CDVPluginResult *pluginResult = nil;
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:[peripheral asDictionary]];
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:connectCallbackId];
+        
+        if (expectDisconnect) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        } else {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:[peripheral asDictionary]];
+        }
+        
+        
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
     }
 
 }
@@ -359,12 +300,13 @@
 
     NSLog(@"didFailToConnectPeripheral");
 
-    NSString *connectCallbackId = [connectCallbacks valueForKey:[peripheral uuidAsString]];
-    [connectCallbacks removeObjectForKey:[peripheral uuidAsString]];
-
-    CDVPluginResult *pluginResult = nil;
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:[peripheral asDictionary]];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:connectCallbackId];
+    if (commandCallbackId) {
+    
+        CDVPluginResult *pluginResult = nil;
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:    [peripheral asDictionary]];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
+        
+    }
 
 }
 
@@ -375,9 +317,8 @@
     NSLog(@"didDiscoverServices");
 
     // save the services to tell when all characteristics have been discovered
-    NSMutableSet *servicesForPeriperal = [NSMutableSet new];
-    [servicesForPeriperal addObjectsFromArray:peripheral.services];
-    [connectCallbackLatches setObject:servicesForPeriperal forKey:[peripheral uuidAsString]];
+    servicesToDiscoverCharacteristicsFor = [NSMutableSet new];
+    [servicesToDiscoverCharacteristicsFor addObjectsFromArray:peripheral.services];
 
     for (CBService *service in peripheral.services) {
         [peripheral discoverCharacteristics:nil forService:service]; // discover all is slow
@@ -388,20 +329,15 @@
 
     NSLog(@"didDiscoverCharacteristicsForService");
 
-    NSString *peripheralUUIDString = [peripheral uuidAsString];
-    NSString *connectCallbackId = [connectCallbacks valueForKey:peripheralUUIDString];
-    NSMutableSet *latch = [connectCallbackLatches valueForKey:peripheralUUIDString];
+    [servicesToDiscoverCharacteristicsFor removeObject:service];
 
-    [latch removeObject:service];
-
-    if ([latch count] == 0) {
-        // Call success callback for connect
-        if (connectCallbackId) {
+    if ([servicesToDiscoverCharacteristicsFor count] == 0) {
+        // Characteristics now discovered for all services - call success callback
+        if (commandCallbackId) {
             CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:[peripheral asDictionary]];
             [pluginResult setKeepCallbackAsBool:TRUE];
-            [self.commandDelegate sendPluginResult:pluginResult callbackId:connectCallbackId];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
         }
-        [connectCallbackLatches removeObjectForKey:peripheralUUIDString];
     }
 
     NSLog(@"Found characteristics for service %@", service);
@@ -414,104 +350,55 @@
 - (void)peripheral:(CBPeripheral *)peripheral didUpdateValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
     NSLog(@"didUpdateValueForCharacteristic");
 
-    NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
-    NSString *notifyCallbackId = [notificationCallbacks objectForKey:key];
-
-    if (notifyCallbackId) {
+    if (commandCallbackId) {
         NSData *data = characteristic.value; // send RAW data to Javascript
 
         CDVPluginResult *pluginResult = nil;
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:data];
         [pluginResult setKeepCallbackAsBool:TRUE]; // keep for notification
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:notifyCallbackId];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
     }
 
-    NSString *readCallbackId = [readCallbacks objectForKey:key];
-
-    if(readCallbackId) {
-        NSData *data = characteristic.value; // send RAW data to Javascript
-
-        CDVPluginResult *pluginResult = nil;
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArrayBuffer:data];
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:readCallbackId];
-
-        [readCallbacks removeObjectForKey:key];
-    }
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didUpdateNotificationStateForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
 
-    NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
-    NSString *notificationCallbackId = [notificationCallbacks objectForKey:key];
-    NSString *stopNotificationCallbackId = [stopNotificationCallbacks objectForKey:key];
-
     CDVPluginResult *pluginResult = nil;
 
-    // we always call the stopNotificationCallbackId if we have a callback
-    // we only call the notificationCallbackId on errors and if there is no stopNotificationCallbackId
-
-    if (stopNotificationCallbackId) {
+    if (commandCallbackId) {
 
         if (error) {
-            NSLog(@"%@", error);
+            NSLog(@"Error: %@", error);
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
         } else {
+            NSLog(@"Registered for notifications");
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
         }
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:stopNotificationCallbackId];
-        [stopNotificationCallbacks removeObjectForKey:key];
-        [notificationCallbacks removeObjectForKey:key];
-
-    } else if (notificationCallbackId && error) {
-
-        NSLog(@"%@", error);
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:[error localizedDescription]];
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:notificationCallbackId];
+        
     }
 
 }
 
 
 - (void)peripheral:(CBPeripheral *)peripheral didWriteValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
-    // This is the callback for write
-
-    NSString *key = [self keyForPeripheral: peripheral andCharacteristic:characteristic];
-    NSString *writeCallbackId = [writeCallbacks objectForKey:key];
-
-    if (writeCallbackId) {
+    
+    if (commandCallbackId) {
         CDVPluginResult *pluginResult = nil;
         if (error) {
-            NSLog(@"%@", error);
+            NSLog(@"Error: %@", error);
             pluginResult = [CDVPluginResult
                 resultWithStatus:CDVCommandStatus_ERROR
                 messageAsString:[error localizedDescription]
             ];
-        } else {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
         }
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:writeCallbackId];
-        [writeCallbacks removeObjectForKey:key];
     }
 
 }
 
 #pragma mark - internal implemetation
-
-- (CBPeripheral*)findPeripheralByUUID:(NSString*)uuid {
-
-    CBPeripheral *peripheral = nil;
-
-    for (CBPeripheral *p in peripherals) {
-
-        NSString* other = p.identifier.UUIDString;
-
-        if ([uuid isEqualToString:other]) {
-            peripheral = p;
-            break;
-        }
-    }
-    return peripheral;
-}
 
 // RedBearLab
 -(CBService *) findServiceFromUUID:(CBUUID *)UUID p:(CBPeripheral *)p
@@ -581,11 +468,9 @@
     CBUUID *serviceUUID = [CBUUID UUIDWithString:serviceUUIDString];
     CBUUID *characteristicUUID = [CBUUID UUIDWithString:characteristicUUIDString];
 
-    CBPeripheral *peripheral = [self findPeripheralByUUID:deviceUUIDString];
+    if (!activePeripheral) {
 
-    if (!peripheral) {
-
-        NSLog(@"Could not find peripherial with UUID %@", deviceUUIDString);
+        NSLog(@"No active peripheral %@", deviceUUIDString);
 
         NSString *errorMessage = [NSString stringWithFormat:@"Could not find peripherial with UUID %@", deviceUUIDString];
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:errorMessage];
@@ -594,18 +479,18 @@
         return nil;
     }
 
-    CBService *service = [self findServiceFromUUID:serviceUUID p:peripheral];
+    CBService *service = [self findServiceFromUUID:serviceUUID p:activePeripheral];
 
     if (!service)
     {
         NSLog(@"Could not find service with UUID %@ on peripheral with UUID %@",
               serviceUUIDString,
-              peripheral.identifier.UUIDString);
+              activePeripheral.identifier.UUIDString);
 
 
         NSString *errorMessage = [NSString stringWithFormat:@"Could not find service with UUID %@ on peripheral with UUID %@",
                                   serviceUUIDString,
-                                  peripheral.identifier.UUIDString];
+                                  activePeripheral.identifier.UUIDString];
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:errorMessage];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 
@@ -629,13 +514,13 @@
         NSLog(@"Could not find characteristic with UUID %@ on service with UUID %@ on peripheral with UUID %@",
               characteristicUUIDString,
               serviceUUIDString,
-              peripheral.identifier.UUIDString);
+              activePeripheral.identifier.UUIDString);
 
         NSString *errorMessage = [NSString stringWithFormat:
                                   @"Could not find characteristic with UUID %@ on service with UUID %@ on peripheral with UUID %@",
                                   characteristicUUIDString,
                                   serviceUUIDString,
-                                  peripheral.identifier.UUIDString];
+                                  activePeripheral.identifier.UUIDString];
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:errorMessage];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 
@@ -643,7 +528,7 @@
     }
 
     BLECommandContext *context = [[BLECommandContext alloc] init];
-    [context setPeripheral:peripheral];
+    [context setPeripheral:activePeripheral];
     [context setService:service];
     [context setCharacteristic:characteristic];
     return context;
