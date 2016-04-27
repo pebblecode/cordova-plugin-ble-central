@@ -263,9 +263,11 @@
     NSLog(@"Status of CoreBluetooth central manager changed %ld %@", (long)central.state, [self centralManagerStateToString: central.state]);
     CDVPluginResult *pluginResult = nil;
 
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:(central.state == CBCentralManagerStatePoweredOn)];
-    [pluginResult setKeepCallbackAsBool:TRUE];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:onBluetooothStateChangeCallback];
+    if (onBluetooothStateChangeCallback != nil) {
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:(central.state == CBCentralManagerStatePoweredOn)];
+        [pluginResult setKeepCallbackAsBool:TRUE];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:onBluetooothStateChangeCallback];
+    }
 
     if (central.state == CBCentralManagerStateUnsupported) {
         NSLog(@"=============================================================");
