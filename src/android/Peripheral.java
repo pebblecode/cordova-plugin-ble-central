@@ -160,20 +160,7 @@ public class Peripheral extends BluetoothGattCallback {
                 // If we actually issued a disconnect from the door, this is a success, otherwise
                 // we can try to reconnect
                 gatt.close();
-                new java.util.Timer().schedule(
-                        new java.util.TimerTask() {
-                            @Override
-                            public void run() {
-                                connected = false;
-                                if (expectDisconnect) {
-                                    commandContext.success("You have been disconnected from the door: ");
-                                } else {
-                                    commandContext.error("You were unexpectedly disconnected from the door: ");
-                                }
-                            }
-                        },
-                        4000
-                );
+                connected = false;
                 return;
             default:
                 commandContext.error("An unexpected response was returned from the new locker connection state");
@@ -275,61 +262,6 @@ public class Peripheral extends BluetoothGattCallback {
             return;
         }
     }
-
-    // HANDLING THE COMMAND QUEUE
-
-    private void next() {
-        // check if we are waiting for a command to finish
-
-        // if there are no further commands queued, we can exit
-
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     // Some devices reuse UUIDs across characteristics, so we can't use service.getCharacteristic(characteristicUUID)
     // instead check the UUID and properties for each characteristic in the service until we find the best match

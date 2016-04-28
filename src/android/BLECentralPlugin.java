@@ -68,6 +68,7 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
     BluetoothAdapter bluetoothAdapter;
     BluetoothManager bluetoothManager;
+    CallbackContext disconnectCallback;
     CallbackContext enableBluetoothCallback;
     CallbackContext onBluetooothStateChangeCallback;
     Peripheral activePeripheral;
@@ -91,6 +92,15 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         List<BluetoothDevice> devices = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT);
         Log.d(TAG, "NUM CONNECTED DEVICES: " + devices.size());
 
+        BroadcastReceiver receiver = this.stateChangeReceiver();
+        IntentFilter filter1 = new IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED);
+        IntentFilter filter2 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED);
+        IntentFilter filter3 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+        IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        activity.registerReceiver(receiver, filter);
+        activity.registerReceiver(receiver, filter1);
+        activity.registerReceiver(receiver, filter2);
+        activity.registerReceiver(receiver, filter3);
 
         switch (action) {
             case START_SCAN:
@@ -110,6 +120,7 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                 break;
             case DISCONNECT:
                 close(callbackContext);
+                disconnectCallback = callbackContext;
                 activeState = States.IDLE;
                 break;
             case WRITE:
@@ -139,9 +150,6 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                 break;
             case ON_STATE_CHANGED:
                 onBluetooothStateChangeCallback = callbackContext;
-                BroadcastReceiver receiver = this.stateChangeReceiver();
-                IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
-                activity.registerReceiver(receiver, filter);
                 break;
             default:
                 LOG.d(TAG, "Invalid action provided");
@@ -156,30 +164,41 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         return new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                final String action = intent.getAction();
-                PluginResult result;
-                if (action.equals(BluetoothAdapter.ACTION_STATE_CHANGED)) {
-                    final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE,
-                            BluetoothAdapter.ERROR);
-                    switch (state) {
-                        case BluetoothAdapter.STATE_OFF:
-                            result = new PluginResult(PluginResult.Status.OK, false);
-                            result.setKeepCallback(true);
-                            onBluetooothStateChangeCallback.sendPluginResult(result);
-                            break;
-                        case BluetoothAdapter.STATE_TURNING_OFF:
-                            Log.d(TAG, "Bluetooth is turning off");
-                            break;
-                        case BluetoothAdapter.STATE_ON:
-                            result = new PluginResult(PluginResult.Status.OK, true);
-                            result.setKeepCallback(true);
-                            onBluetooothStateChangeCallback.sendPluginResult(result);
-                            break;
-                        case BluetoothAdapter.STATE_TURNING_ON:
-                            Log.d(TAG, "Bluetooth is turning on");
-                            break;
+            final String action = intent.getAction();
+            PluginResult result;
+            if (action.equals(BluetoothAdapter.ACTION_STATE_CHANGED)) {
+                if (onBluetooothStateChangeCallback == null) {
+                    Log.d(TAG, "We are not currently listening for bluetooth state change");
+                    return;
+                }
+                final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+                switch (state) {
+                    case BluetoothAdapter.STATE_OFF:
+                        result = new PluginResult(PluginResult.Status.OK, false);
+                        result.setKeepCallback(true);
+                        onBluetooothStateChangeCallback.sendPluginResult(result);
+                        break;
+                    case BluetoothAdapter.STATE_TURNING_OFF:
+                        Log.d(TAG, "Bluetooth is turning off");
+                        break;
+                    case BluetoothAdapter.STATE_ON:
+                        result = new PluginResult(PluginResult.Status.OK, true);
+                        result.setKeepCallback(true);
+                        onBluetooothStateChangeCallback.sendPluginResult(result);
+                        break;
+                    case BluetoothAdapter.STATE_TURNING_ON:
+                        Log.d(TAG, "Bluetooth is turning on");
+                        break;
+                }
+            } else {
+                if (BluetoothDevice.ACTION_ACL_DISCONNECTED.equals(action)) {
+                    if (disconnectCallback != null) {
+                        Log.d(TAG, "We have been disconnected.. probably");
+                        disconnectCallback.success();
+                        disconnectCallback = null;
                     }
                 }
+            }
             }
         };
     }
