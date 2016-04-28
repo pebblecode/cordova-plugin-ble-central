@@ -36,11 +36,12 @@
     [super pluginInitialize];
 
     expectDisconnect = false;
-    
+
     activePeripheral = nil;
     manager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
 
     commandCallbackId = nil;
+    onBluetooothStateChangeCallback = nil;
     servicesToDiscoverCharacteristicsFor = nil;
 }
 
@@ -49,11 +50,11 @@
 - (void)connect:(CDVInvokedUrlCommand *)command {
 
     NSLog(@"Connect");
-    
+
     commandCallbackId = [command.callbackId copy];
-    
+
     NSString *uuidString = [command.arguments objectAtIndex:0];
-    
+
     NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
     NSArray *uuidArray = @[uuid];
     NSArray *peripheralArray = [manager retrievePeripheralsWithIdentifiers:uuidArray];
@@ -66,9 +67,9 @@
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
         return;
     }
-    
+
     activePeripheral = [peripheralArray firstObject];
-    
+
     if (activePeripheral) {
         NSLog(@"Connecting to peripheral with UUID : %@", uuid);
         expectDisconnect = false;
@@ -82,7 +83,7 @@
     NSLog(@"Disconnect");
 
     commandCallbackId = [command.callbackId copy];
-    
+
     if (activePeripheral == nil || activePeripheral.state == CBPeripheralStateDisconnected) {
         NSLog(@"No active peripheral or already disconnected");
         // Just return OK
@@ -90,17 +91,22 @@
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
         return;
     }
-    
+
     expectDisconnect = true;
     [manager cancelPeripheralConnection:activePeripheral];
-    
+
+}
+
+- (void)onBluetoothStateChanged:(CDVInvokedUrlCommand*)command
+{
+    onBluetooothStateChangeCallback = [command.callbackId copy];
 }
 
 // write: function (device_id, service_uuid, characteristic_uuid, value, success, failure) {
 - (void)write:(CDVInvokedUrlCommand*)command {
 
     commandCallbackId = [command.callbackId copy];
-    
+
     BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyWrite];
     NSData *message = [command.arguments objectAtIndex:3]; // This is binary
     if (context) {
@@ -111,7 +117,7 @@
             [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
             return;
         }
-        
+
         CBPeripheral *peripheral = [context peripheral];
         CBCharacteristic *characteristic = [context characteristic];
 
@@ -129,7 +135,7 @@
     NSLog(@"Registering for notification");
 
     commandCallbackId = [command.callbackId copy];
-    
+
     BLECommandContext *context = [self getData:command prop:CBCharacteristicPropertyNotify]; // TODO name this better
 
     if (context) {
@@ -215,7 +221,7 @@
 - (void)isConnected:(CDVInvokedUrlCommand*)command {
 
     CDVPluginResult *pluginResult = nil;
-    
+
     if (activePeripheral && activePeripheral.state == CBPeripheralStateConnected) {
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
     } else {
@@ -255,9 +261,15 @@
 - (void)centralManagerDidUpdateState:(CBCentralManager *)central
 {
     NSLog(@"Status of CoreBluetooth central manager changed %ld %@", (long)central.state, [self centralManagerStateToString: central.state]);
+    CDVPluginResult *pluginResult = nil;
 
-    if (central.state == CBCentralManagerStateUnsupported)
-    {
+    if (onBluetooothStateChangeCallback != nil) {
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:(central.state == CBCentralManagerStatePoweredOn)];
+        [pluginResult setKeepCallbackAsBool:TRUE];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:onBluetooothStateChangeCallback];
+    }
+
+    if (central.state == CBCentralManagerStateUnsupported) {
         NSLog(@"=============================================================");
         NSLog(@"WARNING: This hardware does not support Bluetooth Low Energy.");
         NSLog(@"=============================================================");
@@ -281,16 +293,16 @@
     NSLog(@"didDisconnectPeripheral %@", error);
 
     if (commandCallbackId) {
-        
+
         CDVPluginResult *pluginResult = nil;
-        
+
         if (expectDisconnect) {
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
         } else {
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:[peripheral asDictionary]];
         }
-        
-        
+
+
         [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
     }
 
@@ -301,11 +313,11 @@
     NSLog(@"didFailToConnectPeripheral");
 
     if (commandCallbackId) {
-    
+
         CDVPluginResult *pluginResult = nil;
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsDictionary:    [peripheral asDictionary]];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
-        
+
     }
 
 }
@@ -376,14 +388,14 @@
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
             [self.commandDelegate sendPluginResult:pluginResult callbackId:commandCallbackId];
         }
-        
+
     }
 
 }
 
 
 - (void)peripheral:(CBPeripheral *)peripheral didWriteValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
-    
+
     if (commandCallbackId) {
         CDVPluginResult *pluginResult = nil;
         if (error) {

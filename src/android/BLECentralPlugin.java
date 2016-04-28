@@ -16,6 +16,9 @@ package com.megster.cordova.ble.central;
 
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothProfile;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build.VERSION;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
@@ -48,6 +51,8 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     private static final String WRITE = "write";
     private static final String START_NOTIFICATION = "startNotification"; // register for characteristic notification
     private static final String ENABLE = "enable";
+    private static final String IS_ENABLED = "isEnabled";
+    private static final String ON_STATE_CHANGED = "onBluetoothStateChanged";
 
     // callbacks
     CallbackContext discoverCallback;
@@ -63,7 +68,10 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
     BluetoothAdapter bluetoothAdapter;
     BluetoothManager bluetoothManager;
-
+    CallbackContext commandCallback;
+    CallbackContext enableBluetoothCallback;
+    CallbackContext onBluetooothStateChangeCallback;
+    private boolean expectDisconnect = false;
     Peripheral activePeripheral;
 
     @Override
@@ -75,9 +83,9 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         UUID serviceUUID;
         UUID characteristicUUID;
         String macAddress;
+        Activity activity = cordova.getActivity();
 
         if (bluetoothAdapter == null) {
-            Activity activity = cordova.getActivity();
             bluetoothManager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
             bluetoothAdapter = bluetoothManager.getAdapter();
         }
@@ -85,6 +93,15 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         List<BluetoothDevice> devices = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT);
         Log.d(TAG, "NUM CONNECTED DEVICES: " + devices.size());
 
+        BroadcastReceiver receiver = this.stateChangeReceiver();
+        IntentFilter filter1 = new IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED);
+        IntentFilter filter2 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED);
+        IntentFilter filter3 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+        IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        activity.registerReceiver(receiver, filter);
+        activity.registerReceiver(receiver, filter1);
+        activity.registerReceiver(receiver, filter2);
+        activity.registerReceiver(receiver, filter3);
 
         switch (action) {
             case START_SCAN:
@@ -99,10 +116,14 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                 break;
             case CONNECT:
                 macAddress = args.getString(0);
+                commandCallback = callbackContext;
+                expectDisconnect = false;
                 connect(callbackContext, macAddress);
                 activeState = States.CONNECTED;
                 break;
             case DISCONNECT:
+                commandCallback = callbackContext;
+                expectDisconnect = true;
                 close(callbackContext);
                 activeState = States.IDLE;
                 break;
@@ -112,6 +133,8 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                 characteristicUUID = uuidFromString(args.getString(2));
                 byte[] data = args.getArrayBuffer(3);
                 int type = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
+                commandCallback = callbackContext;
+                expectDisconnect = false;
                 write(callbackContext, macAddress, serviceUUID, characteristicUUID, data, type);
                 break;
             case START_NOTIFICATION:
@@ -119,10 +142,24 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                 final UUID service = uuidFromString(args.getString(1));
                 final CallbackContext cb = callbackContext;
                 final UUID chars = uuidFromString(args.getString(2));
+                commandCallback = callbackContext;
+                expectDisconnect = false;
                 registerNotifyCallback(cb, mac, service, chars);
                 break;
+            case IS_ENABLED:
+                boolean isEnabled = bluetoothAdapter.isEnabled();
+                PluginResult result = new PluginResult(PluginResult.Status.OK, isEnabled);
+                commandCallback = callbackContext;
+                expectDisconnect = false;
+                callbackContext.sendPluginResult(result);
+                break;
             case ENABLE:
-                Log.d(TAG, "We have enabled bluetooth");
+                enableBluetoothCallback = callbackContext;
+                Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                cordova.startActivityForResult(this, intent, REQUEST_ENABLE_BLUETOOTH);
+                break;
+            case ON_STATE_CHANGED:
+                onBluetooothStateChangeCallback = callbackContext;
                 break;
             default:
                 LOG.d(TAG, "Invalid action provided");
@@ -130,6 +167,56 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
         }
         return true;
+    }
+
+
+    private BroadcastReceiver stateChangeReceiver() {
+        return new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                final String action = intent.getAction();
+                PluginResult result;
+                if (action.equals(BluetoothAdapter.ACTION_STATE_CHANGED)) {
+                    if (onBluetooothStateChangeCallback == null) {
+                        Log.d(TAG, "We are not currently listening for bluetooth state change");
+                        return;
+                    }
+                    final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+                    switch (state) {
+                        case BluetoothAdapter.STATE_OFF:
+                            result = new PluginResult(PluginResult.Status.OK, false);
+                            result.setKeepCallback(true);
+                            onBluetooothStateChangeCallback.sendPluginResult(result);
+                            break;
+                        case BluetoothAdapter.STATE_TURNING_OFF:
+                            Log.d(TAG, "Bluetooth is turning off");
+                            break;
+                        case BluetoothAdapter.STATE_ON:
+                            result = new PluginResult(PluginResult.Status.OK, true);
+                            result.setKeepCallback(true);
+                            onBluetooothStateChangeCallback.sendPluginResult(result);
+                            break;
+                        case BluetoothAdapter.STATE_TURNING_ON:
+                            Log.d(TAG, "Bluetooth is turning on");
+                            break;
+                    }
+                } else {
+                    if (!BluetoothDevice.ACTION_ACL_DISCONNECTED.equals(action)) {
+                        return;
+                    }
+                    if (commandCallback == null) {
+                        Log.d(TAG, "We were disconnected, but we don't have a command callback");
+                        return;
+                    }
+                    if (expectDisconnect) {
+                        commandCallback.success();
+                        return;
+                    }
+                    commandCallback.error("Unexpected disconnect occurred");
+                    commandCallback = null;
+                }
+            }
+        };
     }
 
     /*
@@ -217,4 +304,21 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
         return serviceUUIDs.toArray(new UUID[jsonArray.length()]);
     }
 
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (enableBluetoothCallback == null) {
+            return;
+        }
+        if (requestCode != REQUEST_ENABLE_BLUETOOTH) {
+            return;
+        }
+        if (resultCode == Activity.RESULT_OK) {
+            LOG.d(TAG, "User enabled Bluetooth");
+            enableBluetoothCallback.success();
+            return;
+        }
+        LOG.d(TAG, "User did *NOT* enable Bluetooth");
+        enableBluetoothCallback.error("User did not enable Bluetooth");
+        enableBluetoothCallback = null;
+    }
 }
