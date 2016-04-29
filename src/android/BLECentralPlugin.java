@@ -14,24 +14,23 @@
 
 package com.megster.cordova.ble.central;
 
-import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothProfile;
 import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.os.Build.VERSION;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothManager;
 import android.content.Context;
-import android.telecom.Call;
 import android.util.Log;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaArgs;
+import org.apache.cordova.CordovaInterface;
 import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.CordovaWebView;
 import org.apache.cordova.LOG;
 import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
@@ -75,6 +74,22 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
     Peripheral activePeripheral;
 
     @Override
+    public void initialize(CordovaInterface cordova, CordovaWebView webView) {
+        super.initialize(cordova, webView);
+        Activity activity = cordova.getActivity();
+        BroadcastReceiver receiver = this.stateChangeReceiver();
+        IntentFilter filter1 = new IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED);
+        IntentFilter filter2 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED);
+        IntentFilter filter3 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+        IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        activity.registerReceiver(receiver, filter);
+        activity.registerReceiver(receiver, filter1);
+        activity.registerReceiver(receiver, filter2);
+        activity.registerReceiver(receiver, filter3);
+
+    }
+
+    @Override
     public boolean execute(String action, CordovaArgs args, CallbackContext callbackContext) throws JSONException {
         Log.d(TAG, "action = " + action);
 
@@ -92,16 +107,6 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
 
         List<BluetoothDevice> devices = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT);
         Log.d(TAG, "NUM CONNECTED DEVICES: " + devices.size());
-
-        BroadcastReceiver receiver = this.stateChangeReceiver();
-        IntentFilter filter1 = new IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED);
-        IntentFilter filter2 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED);
-        IntentFilter filter3 = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED);
-        IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
-        activity.registerReceiver(receiver, filter);
-        activity.registerReceiver(receiver, filter1);
-        activity.registerReceiver(receiver, filter2);
-        activity.registerReceiver(receiver, filter3);
 
         switch (action) {
             case START_SCAN:
@@ -204,12 +209,14 @@ public class BLECentralPlugin extends CordovaPlugin implements BluetoothAdapter.
                     if (!BluetoothDevice.ACTION_ACL_DISCONNECTED.equals(action)) {
                         return;
                     }
+                    Log.d(TAG, "The current action is: " + action);
                     if (commandCallback == null) {
                         Log.d(TAG, "We were disconnected, but we don't have a command callback");
                         return;
                     }
                     if (expectDisconnect) {
                         commandCallback.success();
+                        commandCallback = null;
                         return;
                     }
                     commandCallback.error("Unexpected disconnect occurred");
